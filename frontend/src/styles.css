@@ -1,17 +1,17 @@
 :root {
-  --topbar-bg: #15161f;
-  --sidebar-bg: #1e1f29;
-  --content-bg: #191a23;
-  --panel-bg: #1e1f29;
+  --topbar-bg: #121212;
+  --sidebar-bg: #1e1e1e;
+  --content-bg: #121212;
+  --panel-bg: #1e1e1e;
   --hover-bg: rgba(255, 255, 255, 0.05);
-  --active-bg: rgba(64, 106, 246, 0.16);
+  --active-bg: rgba(0, 103, 255, 0.16);
   --border: rgba(255, 255, 255, 0.08);
-  --text-primary: #e8e9ed;
-  --text-secondary: #9a9daa;
-  --text-muted: #6d707e;
-  --accent: #406af6;
-  --accent-hover: #3059e8;
-  --folder-blue: #4d7cfe;
+  --text-primary: #ffffff;
+  --text-secondary: #b3b3b3;
+  --text-muted: #8a8a8a;
+  --accent: #0067ff;
+  --accent-hover: #0052d6;
+  --folder-blue: #4d8dff;
   --danger: #e5484d;
   --radius: 6px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter",
@@ -102,8 +102,8 @@ input {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  background: #b5541c;
-  color: #fff;
+  background: #ffffff;
+  color: #121212;
   font-size: 12px;
   font-weight: 600;
   display: inline-flex;
@@ -324,6 +324,40 @@ input {
   align-items: center;
   gap: 8px;
   padding: 4px 20px 10px;
+}
+
+.main-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 6px 12px;
+  width: 280px;
+  color: var(--text-secondary);
+}
+
+.main-search input {
+  background: none;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  width: 100%;
+}
+
+.main-search input::placeholder {
+  color: var(--text-muted);
+}
+
+.row.root-row {
+  grid-template-columns: 1fr auto;
+}
+
+.row .member-meta {
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding-right: 8px;
 }
 
 .toolbar .spacer {
@@ -722,11 +756,47 @@ input {
   gap: 6px;
 }
 
+.upload-tray .tray-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .upload-tray .tray-item .fname {
   font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+}
+
+.upload-tray .upload-state {
+  color: var(--text-muted);
+}
+
+.upload-tray .upload-state.failed,
+.upload-tray .upload-message {
+  color: var(--danger);
+}
+
+.upload-tray .tray-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.upload-tray .tray-actions button {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.upload-tray .tray-actions button:hover {
+  text-decoration: underline;
+}
+
+.upload-tray .upload-message {
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .progress {
@@ -767,10 +837,20 @@ input {
   color: var(--text-secondary);
 }
 
+.banner {
+  margin: 0 20px 10px;
+  padding: 10px 14px;
+  border: 1px solid rgba(229, 72, 77, 0.35);
+  background: rgba(229, 72, 77, 0.12);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
 .drop-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(64, 106, 246, 0.12);
+  background: rgba(0, 103, 255, 0.12);
   border: 2px dashed var(--accent);
   border-radius: 10px;
   display: flex;
