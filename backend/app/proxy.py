@@ -26,7 +26,10 @@ def _service_headers(brand: str) -> dict:
     settings = get_settings()
     if brand not in {b.code for b in settings.brands}:
         raise HTTPException(status_code=404, detail=f"Unknown brand: {brand}")
-    return {"X-Brand": brand, "X-Internal-Token": settings.internal_token}
+    return {
+        "X-Brand": brand,
+        "Authorization": f"Bearer {settings.internal_token}",
+    }
 
 
 def _service_url(path: str) -> str:
@@ -59,12 +62,22 @@ async def _forward_json(
         raise HTTPException(status_code=502, detail=f"Storage service unreachable: {exc}")
     content_type = resp.headers.get("content-type", "")
     body = resp.json() if content_type.startswith("application/json") else {"detail": resp.text}
-    return JSONResponse(status_code=resp.status_code, content=body)
+    # A Zoho 401 is a gateway credential problem, not a missing Storage session.
+    # Passing 401 through would bounce the SPA into Authentik login.
+    status_code = 502 if resp.status_code == 401 else resp.status_code
+    return JSONResponse(status_code=status_code, content=body)
 
 
 @router.get("/{brand}/teamfolders")
 async def teamfolders(brand: str):
     return await _forward_json("GET", brand, "/zoho/workdrive/teamfolders")
+
+
+@router.post("/{brand}/teamfolders")
+async def create_teamfolder(brand: str, body: dict):
+    return await _forward_json(
+        "POST", brand, "/zoho/workdrive/teamfolders", json_body=body
+    )
 
 
 @router.get("/{brand}/folders/{folder_id}/children")
@@ -101,6 +114,49 @@ async def delete_file(brand: str, file_id: str):
     return await _forward_json("DELETE", brand, f"/zoho/workdrive/files/{file_id}")
 
 
+@router.post("/{brand}/folders/{folder_id}/uploads")
+async def start_upload(brand: str, folder_id: str, body: dict):
+    return await _forward_json(
+        "POST",
+        brand,
+        f"/zoho/workdrive/folders/{folder_id}/uploads",
+        json_body=body,
+    )
+
+
+@router.put("/{brand}/uploads/{upload_id}/chunks")
+async def upload_chunk(brand: str, upload_id: str, request: Request):
+    client = get_client()
+    headers = _service_headers(brand)
+    for h in ("content-type", "content-length", "content-range"):
+        if h in request.headers:
+            headers[h] = request.headers[h]
+    try:
+        resp = await client.request(
+            "PUT",
+            _service_url(f"/zoho/workdrive/uploads/{upload_id}/chunks"),
+            content=request.stream(),
+            headers=headers,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Storage service unreachable: {exc}")
+    content_type = resp.headers.get("content-type", "")
+    body = (
+        resp.json()
+        if resp.content and content_type.startswith("application/json")
+        else {"detail": resp.text}
+    )
+    status_code = 502 if resp.status_code == 401 else resp.status_code
+    return JSONResponse(status_code=status_code, content=body)
+
+
+@router.post("/{brand}/uploads/{upload_id}/complete")
+async def complete_upload(brand: str, upload_id: str):
+    return await _forward_json(
+        "POST", brand, f"/zoho/workdrive/uploads/{upload_id}/complete"
+    )
+
+
 @router.get("/{brand}/files/{file_id}/download")
 async def download(brand: str, file_id: str):
     client = get_client()
@@ -116,7 +172,8 @@ async def download(brand: str, file_id: str):
     if resp.status_code >= 400:
         detail = (await resp.aread()).decode(errors="replace")
         await resp.aclose()
-        return JSONResponse(status_code=resp.status_code, content={"detail": detail})
+        status_code = 502 if resp.status_code == 401 else resp.status_code
+        return JSONResponse(status_code=status_code, content={"detail": detail})
     headers = {
         k: v for k, v in resp.headers.items() if k.lower() in _PASS_RESPONSE_HEADERS
     }
@@ -147,4 +204,5 @@ async def upload(brand: str, folder_id: str, request: Request):
         raise HTTPException(status_code=502, detail=f"Storage service unreachable: {exc}")
     content_type = resp.headers.get("content-type", "")
     body = resp.json() if content_type.startswith("application/json") else {"detail": resp.text}
-    return JSONResponse(status_code=resp.status_code, content=body)
+    status_code = 502 if resp.status_code == 401 else resp.status_code
+    return JSONResponse(status_code=status_code, content=body)
