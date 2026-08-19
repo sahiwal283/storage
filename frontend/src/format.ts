@@ -9,7 +9,15 @@ export function formatBytes(size: number | null): string {
 
 export function formatDate(iso: string | null): string {
   if (!iso) return "—";
-  const d = new Date(iso);
+  let d = new Date(iso);
+  // WorkDrive omits the year on current-year dates ("Aug 19, 4:49 PM").
+  // JS Date treats a missing year as 2001.
+  if (!/\b\d{4}\b/.test(iso) && (isNaN(d.getTime()) || d.getFullYear() === 2001)) {
+    d = new Date(iso.replace(",", `, ${new Date().getFullYear()}`));
+    if (!isNaN(d.getTime()) && d.getTime() > Date.now() + 86_400_000) {
+      d.setFullYear(d.getFullYear() - 1);
+    }
+  }
   if (isNaN(d.getTime())) return iso;
   const now = new Date();
   const opts: Intl.DateTimeFormatOptions =

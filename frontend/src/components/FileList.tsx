@@ -12,7 +12,6 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
-  RefreshCw,
   Search,
   Trash2,
   Upload,
@@ -35,13 +34,16 @@ interface Props {
   onOpen: (item: DriveItem) => void;
   onCrumb: (index: number) => void;
   canMutate: boolean;
+  canCreateTeamFolder: boolean;
   onNewFolder: () => void;
+  onNewTeamFolder: () => void;
   onUploadFiles: (files: FileList | File[]) => void;
   onDownload: (item: DriveItem) => void;
   onRename: (item: DriveItem) => void;
   onMove: (item: DriveItem) => void;
   onDelete: (item: DriveItem) => void;
   onRefresh: () => void;
+  onSearch?: (q: string) => void;
 }
 
 interface MenuState {
@@ -65,6 +67,7 @@ export function FileList(props: Props) {
     onOpen,
     onCrumb,
     canMutate,
+    canCreateTeamFolder,
     onUploadFiles,
     onRefresh,
   } = props;
@@ -130,6 +133,13 @@ export function FileList(props: Props) {
       }}
     >
       {dragOver && <div className="drop-overlay">Drop files to upload</div>}
+      {error && /oauth|credential|scope|team_id|not configured/i.test(error) && (
+        <div className="banner">
+          This company is not connected to WorkDrive yet. An admin needs to
+          re-consent WorkDrive scopes for this brand in the Zoho integration
+          admin, then retry.
+        </div>
+      )}
 
       <div className="main-header">
         {view.kind === "search" ? (
@@ -165,11 +175,21 @@ export function FileList(props: Props) {
       </div>
 
       <div className="toolbar">
-        <button className="icon-btn" title="Refresh" onClick={onRefresh}>
-          <RefreshCw size={15} />
-        </button>
+        <div className="main-search">
+          <Search size={15} />
+          <input
+            placeholder="Search"
+            defaultValue={view.kind === "search" ? view.q : ""}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const q = (e.target as HTMLInputElement).value.trim();
+                if (q) props.onSearch?.(q);
+              }
+            }}
+          />
+        </div>
         <span className="spacer" />
-        {canMutate && (
+        {canMutate || canCreateTeamFolder ? (
           <div ref={newMenuRef} style={{ position: "relative" }}>
             <button className="btn primary" onClick={() => setNewMenuOpen((o) => !o)}>
               <Plus size={15} /> New
@@ -179,26 +199,40 @@ export function FileList(props: Props) {
                 className="context-menu"
                 style={{ position: "absolute", top: "calc(100% + 6px)", right: 0 }}
               >
-                <button
-                  onClick={() => {
-                    setNewMenuOpen(false);
-                    fileInput.current?.click();
-                  }}
-                >
-                  <Upload size={15} /> Upload files
-                </button>
-                <button
-                  onClick={() => {
-                    setNewMenuOpen(false);
-                    props.onNewFolder();
-                  }}
-                >
-                  <FolderPlus size={15} /> New folder
-                </button>
+                {canCreateTeamFolder ? (
+                  <button
+                    onClick={() => {
+                      setNewMenuOpen(false);
+                      props.onNewTeamFolder();
+                    }}
+                  >
+                    <FolderPlus size={15} /> New Team Folder
+                  </button>
+                ) : null}
+                {canMutate ? (
+                  <>
+                    <button
+                      onClick={() => {
+                        setNewMenuOpen(false);
+                        fileInput.current?.click();
+                      }}
+                    >
+                      <Upload size={15} /> Upload files
+                    </button>
+                    <button
+                      onClick={() => {
+                        setNewMenuOpen(false);
+                        props.onNewFolder();
+                      }}
+                    >
+                      <FolderPlus size={15} /> New folder
+                    </button>
+                  </>
+                ) : null}
               </div>
             )}
           </div>
-        )}
+        ) : null}
         <input
           ref={fileInput}
           type="file"
@@ -212,14 +246,16 @@ export function FileList(props: Props) {
       </div>
 
       <div className="file-table" onClick={() => onSelect(null)}>
-        <div className="table-head">
-          <button onClick={() => onSort("name")}>Name {sortIcon("name")}</button>
-          <button onClick={() => onSort("modified_time")}>
-            Last Modified {sortIcon("modified_time")}
-          </button>
-          <button onClick={() => onSort("size")}>Size {sortIcon("size")}</button>
-          <span />
-        </div>
+        {view.kind !== "root" && (
+          <div className="table-head">
+            <button onClick={() => onSort("name")}>Name {sortIcon("name")}</button>
+            <button onClick={() => onSort("modified_time")}>
+              Last Modified {sortIcon("modified_time")}
+            </button>
+            <button onClick={() => onSort("size")}>Size {sortIcon("size")}</button>
+            <span />
+          </div>
+        )}
 
         {loading ? (
           <div className="empty-state">
@@ -243,7 +279,7 @@ export function FileList(props: Props) {
           items.map((item) => (
             <div
               key={item.id}
-              className={`row ${selected?.id === item.id ? "selected" : ""}`}
+              className={`row ${view.kind === "root" ? "root-row" : ""} ${selected?.id === item.id ? "selected" : ""}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onSelect(item);
@@ -264,21 +300,31 @@ export function FileList(props: Props) {
                 )}
                 <div className="texts">
                   <div className="name">{item.name}</div>
-                  {item.created_by && (
+                  {view.kind !== "root" && item.created_by && (
                     <div className="subtitle">Uploaded by {item.created_by}</div>
                   )}
                 </div>
               </div>
-              <div className="meta">
-                {item.modified_time
-                  ? `${formatDate(item.modified_time)}${
-                      item.modified_by ? ` by ${item.modified_by}` : ""
-                    }`
-                  : "—"}
-              </div>
-              <div className="meta">
-                {item.type === "folder" ? "—" : formatBytes(item.size)}
-              </div>
+              {view.kind === "root" ? (
+                <div className="member-meta">
+                  {item.members_count != null
+                    ? `${item.members_count} Member${item.members_count === 1 ? "" : "s"}`
+                    : "Team Folder"}
+                </div>
+              ) : (
+                <>
+                  <div className="meta">
+                    {item.modified_time
+                      ? `${formatDate(item.modified_time)}${
+                          item.modified_by ? ` by ${item.modified_by}` : ""
+                        }`
+                      : "—"}
+                  </div>
+                  <div className="meta">
+                    {item.type === "folder" ? "—" : formatBytes(item.size)}
+                  </div>
+                </>
+              )}
               <div className="actions">
                 <button
                   className="icon-btn"

@@ -3,8 +3,8 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Folder,
   FolderClosed,
-  Users,
 } from "lucide-react";
 import type { Brand, TeamFolder } from "../types";
 import { brandColor, initials } from "../format";
@@ -91,7 +91,7 @@ export function Sidebar({
           style={{ paddingLeft: 16 }}
           onClick={onRoot}
         >
-          <Users size={16} />
+          <Folder size={16} />
           <span style={{ fontWeight: 600 }}>Team Folders</span>
         </button>
         <button className="nav-heading" onClick={() => setExpanded((e) => !e)}>

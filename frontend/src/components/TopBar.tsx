@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Bell, Search, Settings, X } from "lucide-react";
+import { Bell, CircleHelp, Search, Settings, X } from "lucide-react";
 import type { Brand } from "../types";
-import { brandColor, initials } from "../format";
+import { initials } from "../format";
 
 interface Props {
   me: { name: string; email: string } | null;
@@ -62,13 +62,15 @@ export function TopBar({ me, brand, onSearch, searchActive }: Props) {
       <button className="icon-btn" title="Notifications">
         <Bell size={17} />
       </button>
+      <button className="icon-btn" title="Help">
+        <CircleHelp size={17} />
+      </button>
       <button className="icon-btn" title="Settings">
         <Settings size={17} />
       </button>
       <div
         className="avatar"
         title={me ? `${me.name} (${me.email})` : ""}
-        style={brand ? { background: brandColor(brand.code) } : undefined}
       >
         {me ? initials(me.name || me.email) : "…"}
       </div>

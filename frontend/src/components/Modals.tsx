@@ -6,6 +6,7 @@ import type { DriveItem, TeamFolder } from "../types";
 export type ModalState =
   | null
   | { type: "newFolder" }
+  | { type: "newTeamFolder" }
   | { type: "rename"; item: DriveItem }
   | { type: "move"; item: DriveItem }
   | { type: "delete"; item: DriveItem };
@@ -31,6 +32,7 @@ export function Modals(props: Props) {
       }}
     >
       {modal.type === "newFolder" && <NewFolder {...props} />}
+      {modal.type === "newTeamFolder" && <NewTeamFolder {...props} />}
       {modal.type === "rename" && <Rename {...props} item={modal.item} />}
       {modal.type === "move" && <Move {...props} item={modal.item} />}
       {modal.type === "delete" && <Delete {...props} item={modal.item} />}
@@ -59,6 +61,48 @@ function NewFolder({ brand, currentFolderId, onClose, onDone, onError }: Props) 
         <input
           autoFocus
           placeholder="Folder name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && void submit()}
+        />
+      </div>
+      <div className="actions-row">
+        <button className="btn" onClick={onClose}>
+          Cancel
+        </button>
+        <button
+          className="btn primary"
+          disabled={!name.trim() || busy}
+          onClick={() => void submit()}
+        >
+          {busy ? "Creating…" : "Create"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function NewTeamFolder({ brand, onClose, onDone, onError }: Props) {
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    try {
+      await api.createTeamFolder(brand, name.trim());
+      onDone(`Team folder “${name.trim()}” created`);
+    } catch (e) {
+      setBusy(false);
+      onError(e instanceof Error ? e.message : String(e));
+    }
+  };
+  return (
+    <div className="modal">
+      <h2>New Team Folder</h2>
+      <div className="field">
+        <input
+          autoFocus
+          placeholder="Team folder name"
           value={name}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && void submit()}

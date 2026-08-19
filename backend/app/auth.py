@@ -106,7 +106,10 @@ async def callback(request: Request):
     jwks = await _get_jwks(settings)
     claims = jwt.decode(token["id_token"], jwks)
     claims.validate()
-    if claims.get("iss") != settings.oidc_issuer or (
+    # Validate iss against the IdP's authoritative discovery value — resilient
+    # to Authentik global vs per-provider issuer modes.
+    expected_iss = str(meta.get("issuer", "")).rstrip("/")
+    if str(claims.get("iss", "")).rstrip("/") != expected_iss or (
         settings.oidc_client_id not in _as_list(claims.get("aud"))
     ):
         raise HTTPException(status_code=400, detail="Invalid id_token")

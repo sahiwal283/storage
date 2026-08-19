@@ -13,11 +13,13 @@ export interface DriveItem {
   modified_by: string | null;
   created_time: string | null;
   created_by: string | null;
+  members_count?: number | null;
 }
 
 export interface TeamFolder {
   id: string;
   name: string;
+  members_count?: number | null;
 }
 
 export interface Crumb {
