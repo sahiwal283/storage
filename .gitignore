@@ -1,0 +1,6 @@
+backend/venv/
+backend/static/
+frontend/node_modules/
+__pycache__/
+.remember/
+frontend/tsconfig.tsbuildinfo

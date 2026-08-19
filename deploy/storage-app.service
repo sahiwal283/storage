@@ -1,0 +1,20 @@
+[Unit]
+Description=Storage app (multi-brand WorkDrive UI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=storage
+Group=storage
+WorkingDirectory=/opt/storage-app/backend
+EnvironmentFile=/etc/storage-app.env
+ExecStart=/opt/storage-app/backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8300
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
