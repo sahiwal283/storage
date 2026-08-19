@@ -191,6 +191,7 @@ export default function App() {
       controllers.current.set(id, controller);
       updateUpload(id, {
         status: "uploading",
+        mode: undefined,
         paused: false,
         message: undefined,
       });
@@ -370,7 +371,7 @@ export default function App() {
   useEffect(() => {
     if (!hasUploading) return;
     const interval = window.setInterval(() => {
-      void api.me();
+      void api.me().catch(() => {});
     }, 4 * 60 * 1000);
     return () => window.clearInterval(interval);
   }, [hasUploading]);
