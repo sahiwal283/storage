@@ -152,8 +152,12 @@ export const api = {
   ): Promise<{ acked_end: number }> =>
     new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      const abort = () => xhr.abort();
       const cleanup = () => signal.removeEventListener("abort", abort);
+      const abort = () => {
+        xhr.abort();
+        cleanup();
+        reject(new DOMException("Upload aborted", "AbortError"));
+      };
       xhr.open("PUT", `/api/${brand}/uploads/${uploadId}/chunks`);
       xhr.setRequestHeader("Content-Type", "application/octet-stream");
       xhr.setRequestHeader("Content-Range", contentRange);
@@ -183,11 +187,11 @@ export const api = {
         cleanup();
         reject(new DOMException("Upload aborted", "AbortError"));
       };
-      signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) {
-        abort();
+        reject(new DOMException("Upload aborted", "AbortError"));
         return;
       }
+      signal.addEventListener("abort", abort, { once: true });
       xhr.send(blob);
     }),
   upload: (
@@ -200,8 +204,12 @@ export const api = {
     new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       const form = new FormData();
-      const abort = () => xhr.abort();
       const cleanup = () => signal?.removeEventListener("abort", abort);
+      const abort = () => {
+        xhr.abort();
+        cleanup();
+        reject(new DOMException("Upload aborted", "AbortError"));
+      };
       form.append("file", file, file.name);
       xhr.open("POST", `/api/${brand}/folders/${folderId}/upload`);
       xhr.upload.onprogress = (e) => {
@@ -220,11 +228,11 @@ export const api = {
         cleanup();
         reject(new DOMException("Upload aborted", "AbortError"));
       };
-      signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) {
-        abort();
+        reject(new DOMException("Upload aborted", "AbortError"));
         return;
       }
+      signal?.addEventListener("abort", abort, { once: true });
       xhr.send(form);
     }),
 };

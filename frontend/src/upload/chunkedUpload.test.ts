@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
-import { errorCode } from "../api";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api, errorCode } from "../api";
 import { SIMPLE_UPLOAD_MAX, STREAM_FALLBACK_MAX } from "./constants";
 import {
+  CompleteFailedError,
   SessionExpiredError,
   UploadSessionExpiredError,
   uploadFile,
@@ -22,6 +23,32 @@ function baseOptions(size: number) {
     waitWhilePaused: vi.fn(async () => undefined),
   };
 }
+
+function installNonSignalingXhr() {
+  const abort = vi.fn();
+  const send = vi.fn();
+
+  class FakeXmlHttpRequest {
+    upload = { onprogress: null };
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onabort: (() => void) | null = null;
+    status = 0;
+    responseText = "";
+
+    open() {}
+    setRequestHeader() {}
+    abort = abort;
+    send = send;
+  }
+
+  vi.stubGlobal("XMLHttpRequest", FakeXmlHttpRequest);
+  return { abort, send };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("uploadFile", () => {
   it("uses simple upload under 10 MiB", async () => {
@@ -179,6 +206,34 @@ describe("uploadFile", () => {
       }),
     ).rejects.toBeInstanceOf(UploadSessionExpiredError);
   });
+
+  it("exposes the upload ID when completion fails", async () => {
+    const completeError = new Error("complete failed");
+
+    try {
+      await uploadFile({
+        ...baseOptions(SIMPLE_UPLOAD_MAX),
+        transport: {
+          start: vi
+            .fn()
+            .mockResolvedValue({ upload_id: "uid", chunk_size: SIMPLE_UPLOAD_MAX }),
+          putChunk: vi
+            .fn()
+            .mockResolvedValue({ acked_end: SIMPLE_UPLOAD_MAX - 1 }),
+          complete: vi.fn().mockRejectedValue(completeError),
+          simpleUpload: vi.fn(),
+        },
+      });
+      throw new Error("Expected completion to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(CompleteFailedError);
+      expect(error).toMatchObject({
+        uploadId: "uid",
+        mode: "chunked",
+        cause: completeError,
+      });
+    }
+  });
 });
 
 describe("errorCode", () => {
@@ -194,5 +249,48 @@ describe("errorCode", () => {
       }),
     ).toBe("CHUNK_UPLOAD_UNAVAILABLE");
     expect(errorCode({ detail: { code: "DIRECT_CODE" } })).toBe("DIRECT_CODE");
+  });
+});
+
+describe("aborted XHR uploads", () => {
+  it("rejects a chunk immediately when the signal is already aborted", async () => {
+    const xhr = installNonSignalingXhr();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      Promise.race([
+        api.putChunk(
+          "haute_brands",
+          "uid",
+          new Blob(["chunk"]),
+          "bytes 0-4/5",
+          vi.fn(),
+          controller.signal,
+        ),
+        Promise.resolve("still pending"),
+      ]),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(xhr.send).not.toHaveBeenCalled();
+  });
+
+  it("rejects a simple upload immediately when the signal is already aborted", async () => {
+    const xhr = installNonSignalingXhr();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      Promise.race([
+        api.upload(
+          "haute_brands",
+          "fld",
+          fileOf(1),
+          vi.fn(),
+          controller.signal,
+        ),
+        Promise.resolve("still pending"),
+      ]),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(xhr.send).not.toHaveBeenCalled();
   });
 });

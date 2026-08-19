@@ -37,6 +37,19 @@ export class UploadSessionExpiredError extends Error {
   }
 }
 
+export class CompleteFailedError extends Error {
+  readonly uploadId: string;
+  readonly mode = "chunked" as const;
+  readonly cause: unknown;
+
+  constructor(uploadId: string, cause: unknown) {
+    super("All chunks uploaded, but the upload could not be completed.");
+    this.name = "CompleteFailedError";
+    this.uploadId = uploadId;
+    this.cause = cause;
+  }
+}
+
 type UploadError = Error & {
   code?: string;
   status?: number;
@@ -176,7 +189,11 @@ export async function uploadFile(
   try {
     await transport.complete(session.upload_id);
   } catch (error) {
-    normalizeLiveSessionError(error);
+    let cause = error;
+    const status = statusOf(error);
+    if (status === 401) cause = new SessionExpiredError();
+    if (status === 404 || status === 410) cause = new UploadSessionExpiredError();
+    throw new CompleteFailedError(session.upload_id, cause);
   }
   return { mode: "chunked", uploadId: session.upload_id };
 }
