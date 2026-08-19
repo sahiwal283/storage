@@ -53,6 +53,13 @@ export class CompleteFailedError extends Error {
 type UploadError = Error & {
   code?: string;
   status?: number;
+  retryAfterMs?: number;
+};
+
+export type UploadCheckpoint = {
+  uploadId: string;
+  ackedEnd: number;
+  chunkSize: number;
 };
 
 type UploadFileOptions = {
@@ -65,6 +72,8 @@ type UploadFileOptions = {
   signal: AbortSignal;
   waitWhilePaused: () => Promise<void>;
   sleep?: (ms: number) => Promise<void>;
+  resume?: UploadCheckpoint;
+  onCheckpoint?: (state: UploadCheckpoint) => void;
 };
 
 export type UploadFileResult = {
@@ -73,6 +82,8 @@ export type UploadFileResult = {
 };
 
 const RETRY_DELAYS = [1000, 2000, 4000] as const;
+const MAX_CHUNK_ATTEMPTS = 3;
+const RATE_LIMIT_BACKOFF_MS = 60_000;
 
 function statusOf(error: unknown): number | undefined {
   return (error as UploadError | undefined)?.status;
@@ -95,6 +106,21 @@ const defaultSleep = (ms: number) =>
     window.setTimeout(resolve, ms);
   });
 
+function retryDelayMs(error: unknown, attempt: number): number {
+  if (statusOf(error) === 429) {
+    const retryAfterMs = (error as UploadError | undefined)?.retryAfterMs;
+    if (
+      typeof retryAfterMs === "number" &&
+      Number.isFinite(retryAfterMs) &&
+      retryAfterMs > 0
+    ) {
+      return retryAfterMs;
+    }
+    return RATE_LIMIT_BACKOFF_MS;
+  }
+  return RETRY_DELAYS[attempt];
+}
+
 async function uploadChunkWithRetry(
   operation: () => Promise<{ acked_end: number }>,
   sleep: (ms: number) => Promise<void>,
@@ -108,8 +134,8 @@ async function uploadChunkWithRetry(
         normalizeLiveSessionError(error);
       }
       if ((error as Error | undefined)?.name === "AbortError") throw error;
-      if (attempt === RETRY_DELAYS.length) throw error;
-      await sleep(RETRY_DELAYS[attempt]);
+      if (attempt >= MAX_CHUNK_ATTEMPTS - 1) throw error;
+      await sleep(retryDelayMs(error, attempt));
     }
   }
 }
@@ -125,9 +151,11 @@ export async function uploadFile(
     signal,
     waitWhilePaused,
     sleep = defaultSleep,
+    resume,
+    onCheckpoint,
   } = opts;
 
-  if (file.size < SIMPLE_UPLOAD_MAX) {
+  if (file.size < SIMPLE_UPLOAD_MAX && resume == null) {
     try {
       await transport.simpleUpload(folderId, file, onProgress, signal);
       return { mode: "simple" };
@@ -137,31 +165,42 @@ export async function uploadFile(
   }
 
   let session: { upload_id: string; chunk_size: number };
-  try {
-    session = await transport.start(folderId, {
-      filename: file.name,
-      size: file.size,
-      content_type: file.type || "application/octet-stream",
-    });
-  } catch (error) {
-    const uploadError = error as UploadError;
-    if (uploadError.code !== "CHUNK_UPLOAD_UNAVAILABLE") {
-      normalizeSessionError(error);
-    }
-    if (file.size > STREAM_FALLBACK_MAX) {
-      throw new Error(
-        "Files over 2 GiB require chunked upload, which is currently unavailable.",
-      );
-    }
+  let ackedEnd: number;
+  if (resume) {
+    session = { upload_id: resume.uploadId, chunk_size: resume.chunkSize };
+    ackedEnd = resume.ackedEnd;
+  } else {
     try {
-      await transport.simpleUpload(folderId, file, onProgress, signal);
-      return { mode: "fallback" };
-    } catch (fallbackError) {
-      normalizeSessionError(fallbackError);
+      session = await transport.start(folderId, {
+        filename: file.name,
+        size: file.size,
+        content_type: file.type || "application/octet-stream",
+      });
+    } catch (error) {
+      const uploadError = error as UploadError;
+      if (uploadError.code !== "CHUNK_UPLOAD_UNAVAILABLE") {
+        normalizeSessionError(error);
+      }
+      if (file.size > STREAM_FALLBACK_MAX) {
+        throw new Error(
+          "Files over 2 GiB require chunked upload, which is currently unavailable.",
+        );
+      }
+      try {
+        await transport.simpleUpload(folderId, file, onProgress, signal);
+        return { mode: "fallback" };
+      } catch (fallbackError) {
+        normalizeSessionError(fallbackError);
+      }
     }
+    ackedEnd = -1;
+    onCheckpoint?.({
+      uploadId: session.upload_id,
+      ackedEnd,
+      chunkSize: session.chunk_size,
+    });
   }
 
-  let ackedEnd = -1;
   while (ackedEnd + 1 < file.size) {
     await waitWhilePaused();
     const start = ackedEnd + 1;
@@ -183,6 +222,11 @@ export async function uploadFile(
       sleep,
     );
     ackedEnd = result.acked_end;
+    onCheckpoint?.({
+      uploadId: session.upload_id,
+      ackedEnd,
+      chunkSize: session.chunk_size,
+    });
     onProgress(((ackedEnd + 1) / file.size) * 100);
   }
 

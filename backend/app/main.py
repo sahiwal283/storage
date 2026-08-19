@@ -4,9 +4,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, proxy
+from . import __version__, auth, proxy
 
-app = FastAPI(title="Storage", docs_url=None, redoc_url=None)
+app = FastAPI(title="Storage", version=__version__, docs_url=None, redoc_url=None)
 
 app.include_router(auth.router)
 app.include_router(proxy.router)
@@ -16,7 +16,7 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 @app.get("/healthz")
 async def healthz():
-    return {"status": "ok"}
+    return {"status": "ok", "version": __version__}
 
 
 if (STATIC_DIR / "assets").is_dir():

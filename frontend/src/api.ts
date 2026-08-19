@@ -4,6 +4,7 @@ import type { ChunkTransport } from "./upload/chunkedUpload";
 class ApiError extends Error {
   status: number;
   code?: string;
+  retryAfterMs?: number;
   constructor(status: number, message: string) {
     super(message);
     this.status = status;
@@ -83,6 +84,10 @@ function xhrError(xhr: XMLHttpRequest, fallback: string): ApiError {
   }
   const error = new ApiError(xhr.status, detail);
   if (code) error.code = code;
+  const retryAfter = xhr.getResponseHeader("Retry-After");
+  if (retryAfter != null && /^\d+$/.test(retryAfter.trim())) {
+    error.retryAfterMs = Number(retryAfter.trim()) * 1000;
+  }
   return error;
 }
 

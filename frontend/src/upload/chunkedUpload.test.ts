@@ -145,7 +145,6 @@ describe("uploadFile", () => {
       .fn()
       .mockRejectedValueOnce(new Error("net 1"))
       .mockRejectedValueOnce(new Error("net 2"))
-      .mockRejectedValueOnce(new Error("net 3"))
       .mockResolvedValue({ acked_end: SIMPLE_UPLOAD_MAX - 1 });
 
     await uploadFile({
@@ -161,11 +160,140 @@ describe("uploadFile", () => {
       },
     });
 
-    expect(putChunk).toHaveBeenCalledTimes(4);
-    expect(sleep.mock.calls).toEqual([[1000], [2000], [4000]]);
+    expect(putChunk).toHaveBeenCalledTimes(3);
+    expect(sleep.mock.calls).toEqual([[1000], [2000]]);
     expect(new Set(putChunk.mock.calls.map((call) => call[2]))).toEqual(
       new Set([`bytes 0-${SIMPLE_UPLOAD_MAX - 1}/${SIMPLE_UPLOAD_MAX}`]),
     );
+  });
+
+  it("backs off for 60 seconds after a rate limit response", async () => {
+    const sleep = vi.fn(async () => undefined);
+    const rateLimitError = Object.assign(new Error("slow down"), { status: 429 });
+    const putChunk = vi
+      .fn()
+      .mockRejectedValueOnce(rateLimitError)
+      .mockResolvedValue({ acked_end: SIMPLE_UPLOAD_MAX - 1 });
+
+    await uploadFile({
+      ...baseOptions(SIMPLE_UPLOAD_MAX),
+      sleep,
+      transport: {
+        start: vi
+          .fn()
+          .mockResolvedValue({ upload_id: "uid", chunk_size: SIMPLE_UPLOAD_MAX }),
+        putChunk,
+        complete: vi.fn().mockResolvedValue(undefined),
+        simpleUpload: vi.fn(),
+      },
+    });
+
+    expect(putChunk).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(60_000);
+  });
+
+  it("resumes from the last acknowledged byte without starting again", async () => {
+    const start = vi.fn();
+    const putChunk = vi
+      .fn()
+      .mockResolvedValue({ acked_end: 12 * 1024 * 1024 - 1 });
+
+    await uploadFile({
+      ...baseOptions(12 * 1024 * 1024),
+      resume: {
+        uploadId: "existing",
+        ackedEnd: 8 * 1024 * 1024 - 1,
+        chunkSize: 8 * 1024 * 1024,
+      },
+      transport: {
+        start,
+        putChunk,
+        complete: vi.fn().mockResolvedValue(undefined),
+        simpleUpload: vi.fn(),
+      },
+    });
+
+    expect(start).not.toHaveBeenCalled();
+    expect(putChunk).toHaveBeenCalledOnce();
+    expect(putChunk.mock.calls[0][0]).toBe("existing");
+    expect(putChunk.mock.calls[0][2]).toBe(
+      "bytes 8388608-12582911/12582912",
+    );
+  });
+
+  it("reports the session and each acknowledged checkpoint", async () => {
+    const onCheckpoint = vi.fn();
+
+    await uploadFile({
+      ...baseOptions(12 * 1024 * 1024),
+      onCheckpoint,
+      transport: {
+        start: vi
+          .fn()
+          .mockResolvedValue({ upload_id: "uid", chunk_size: 8 * 1024 * 1024 }),
+        putChunk: vi
+          .fn()
+          .mockResolvedValueOnce({ acked_end: 8 * 1024 * 1024 - 1 })
+          .mockResolvedValueOnce({ acked_end: 12 * 1024 * 1024 - 1 }),
+        complete: vi.fn().mockResolvedValue(undefined),
+        simpleUpload: vi.fn(),
+      },
+    });
+
+    expect(onCheckpoint.mock.calls).toEqual([
+      [{ uploadId: "uid", ackedEnd: -1, chunkSize: 8 * 1024 * 1024 }],
+      [
+        {
+          uploadId: "uid",
+          ackedEnd: 8 * 1024 * 1024 - 1,
+          chunkSize: 8 * 1024 * 1024,
+        },
+      ],
+      [
+        {
+          uploadId: "uid",
+          ackedEnd: 12 * 1024 * 1024 - 1,
+          chunkSize: 8 * 1024 * 1024,
+        },
+      ],
+    ]);
+  });
+
+  it("does not start the next chunk while paused", async () => {
+    let paused = false;
+    let resume!: () => void;
+    const waitWhilePaused = vi.fn(() => {
+      if (!paused) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+    });
+    const putChunk = vi.fn(async (_id, _blob, contentRange) => {
+      const end = Number(/bytes \d+-(\d+)\//.exec(contentRange)![1]);
+      if (putChunk.mock.calls.length === 1) paused = true;
+      return { acked_end: end };
+    });
+
+    const upload = uploadFile({
+      ...baseOptions(12 * 1024 * 1024),
+      isPaused: () => paused,
+      waitWhilePaused,
+      transport: {
+        start: vi
+          .fn()
+          .mockResolvedValue({ upload_id: "uid", chunk_size: 8 * 1024 * 1024 }),
+        putChunk,
+        complete: vi.fn().mockResolvedValue(undefined),
+        simpleUpload: vi.fn(),
+      },
+    });
+
+    await vi.waitFor(() => expect(waitWhilePaused).toHaveBeenCalledTimes(2));
+    expect(putChunk).toHaveBeenCalledOnce();
+    paused = false;
+    resume();
+    await upload;
+    expect(putChunk).toHaveBeenCalledTimes(2);
   });
 
   it("maps 401 to SessionExpiredError without retry", async () => {

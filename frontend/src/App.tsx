@@ -20,6 +20,7 @@ import {
   SessionExpiredError,
   UploadSessionExpiredError,
   uploadFile,
+  type UploadCheckpoint,
 } from "./upload/chunkedUpload";
 import { createSerialQueue } from "./upload/queue";
 
@@ -36,8 +37,37 @@ type UploadJob = {
   brand: string;
   folderId: string;
   uploadId?: string;
+  ackedEnd?: number;
+  chunkSize?: number;
   completeOnly?: boolean;
 };
+
+function jobResume(job: UploadJob): UploadCheckpoint | undefined {
+  if (
+    job.uploadId == null ||
+    job.ackedEnd == null ||
+    job.chunkSize == null
+  ) {
+    return undefined;
+  }
+  return {
+    uploadId: job.uploadId,
+    ackedEnd: job.ackedEnd,
+    chunkSize: job.chunkSize,
+  };
+}
+
+function progressFromJob(job: UploadJob): number {
+  if (job.completeOnly) return 100;
+  if (job.ackedEnd == null || job.ackedEnd < 0) return 0;
+  return ((job.ackedEnd + 1) / job.file.size) * 100;
+}
+
+function clearResume(job: UploadJob): void {
+  job.uploadId = undefined;
+  job.ackedEnd = undefined;
+  job.chunkSize = undefined;
+}
 
 export default function App() {
   const [me, setMe] = useState<{ name: string; email: string } | null>(null);
@@ -189,9 +219,11 @@ export default function App() {
 
       const controller = new AbortController();
       controllers.current.set(id, controller);
+      const resume = job.completeOnly ? undefined : jobResume(job);
       updateUpload(id, {
         status: "uploading",
-        mode: undefined,
+        mode: resume ? "chunked" : undefined,
+        pct: progressFromJob(job),
         paused: false,
         message: undefined,
       });
@@ -204,7 +236,7 @@ export default function App() {
             const status = (error as { status?: number } | undefined)?.status;
             if (status !== 404 && status !== 410) throw error;
             job.completeOnly = false;
-            job.uploadId = undefined;
+            clearResume(job);
             toast("Upload session expired — restarting from the beginning.");
           }
         }
@@ -212,45 +244,68 @@ export default function App() {
         if (!job.completeOnly) {
           const baseTransport = makeTransport(job.brand);
           let chunkStartAttempted = false;
-          const result = await uploadFile({
-            brand: job.brand,
-            folderId: job.folderId,
-            file: job.file,
-            transport: {
-              ...baseTransport,
-              start: async (folderId, body) => {
-                chunkStartAttempted = true;
-                const session = await baseTransport.start(folderId, body);
-                updateUpload(id, { mode: "chunked" });
-                return session;
-              },
-              simpleUpload: async (
-                folderId,
-                file,
-                onProgress,
-                signal,
-              ) => {
-                updateUpload(id, {
-                  mode: chunkStartAttempted ? "fallback" : "simple",
-                });
-                await baseTransport.simpleUpload(
+          const persistCheckpoint = (state: UploadCheckpoint) => {
+            job.uploadId = state.uploadId;
+            job.ackedEnd = state.ackedEnd;
+            job.chunkSize = state.chunkSize;
+          };
+          const runTransfer = (from?: UploadCheckpoint) =>
+            uploadFile({
+              brand: job.brand,
+              folderId: job.folderId,
+              file: job.file,
+              resume: from,
+              onCheckpoint: persistCheckpoint,
+              transport: {
+                ...baseTransport,
+                start: async (folderId, body) => {
+                  chunkStartAttempted = true;
+                  const session = await baseTransport.start(folderId, body);
+                  updateUpload(id, { mode: "chunked" });
+                  return session;
+                },
+                simpleUpload: async (
                   folderId,
                   file,
                   onProgress,
                   signal,
-                );
+                ) => {
+                  updateUpload(id, {
+                    mode: chunkStartAttempted ? "fallback" : "simple",
+                  });
+                  await baseTransport.simpleUpload(
+                    folderId,
+                    file,
+                    onProgress,
+                    signal,
+                  );
+                },
               },
-            },
-            onProgress: (pct) => updateUpload(id, { pct }),
-            isPaused: () => pausedIds.current.has(id),
-            signal: controller.signal,
-            waitWhilePaused: () => {
-              if (!pausedIds.current.has(id)) return Promise.resolve();
-              return new Promise<void>((resolve) => {
-                pauseWaiters.current.set(id, resolve);
-              });
-            },
-          });
+              onProgress: (pct) => updateUpload(id, { pct }),
+              isPaused: () => pausedIds.current.has(id),
+              signal: controller.signal,
+              waitWhilePaused: () => {
+                if (!pausedIds.current.has(id)) return Promise.resolve();
+                return new Promise<void>((resolve) => {
+                  pauseWaiters.current.set(id, resolve);
+                });
+              },
+            });
+          let result;
+          try {
+            result = await runTransfer(resume);
+          } catch (error) {
+            if (!(error instanceof UploadSessionExpiredError)) throw error;
+            clearResume(job);
+            updateUpload(id, {
+              pct: 0,
+              mode: undefined,
+              message:
+                "Upload session expired — restarting from the beginning.",
+            });
+            toast("Upload session expired — restarting from the beginning.");
+            result = await runTransfer();
+          }
           updateUpload(id, { mode: result.mode });
         }
 
@@ -276,18 +331,18 @@ export default function App() {
           message =
             "signed out — upload must restart after you sign in.";
           job.completeOnly = false;
-          job.uploadId = undefined;
+          clearResume(job);
         } else if (error instanceof UploadSessionExpiredError) {
           message =
             "upload session expired — Retry will restart from the beginning.";
           job.completeOnly = false;
-          job.uploadId = undefined;
+          clearResume(job);
         } else if (error instanceof CompleteFailedError) {
           if (error.cause instanceof UploadSessionExpiredError) {
             message =
               "upload session expired — Retry will restart from the beginning.";
             job.completeOnly = false;
-            job.uploadId = undefined;
+            clearResume(job);
           } else {
             job.completeOnly = true;
             job.uploadId = error.uploadId;
@@ -344,10 +399,11 @@ export default function App() {
   };
 
   const retryUpload = (id: number) => {
-    if (!uploadJobs.current.has(id)) return;
+    const job = uploadJobs.current.get(id);
+    if (!job) return;
     updateUpload(id, {
       status: "queued",
-      pct: 0,
+      pct: progressFromJob(job),
       paused: false,
       message: undefined,
     });
