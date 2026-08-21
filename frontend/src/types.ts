@@ -13,6 +13,7 @@ export interface DriveItem {
   modified_by: string | null;
   created_time: string | null;
   created_by: string | null;
+  created_by_email?: string | null;
   members_count?: number | null;
 }
 

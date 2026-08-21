@@ -34,6 +34,23 @@ export function brandColor(code: string): string {
   return palette[hash % palette.length];
 }
 
+export function createdBySubtitle(item: {
+  type: "folder" | "file";
+  created_by: string | null;
+}): string | null {
+  if (!item.created_by) return null;
+  switch (item.type) {
+    case "folder":
+      return `Created by ${item.created_by}`;
+    case "file":
+      return `Uploaded by ${item.created_by}`;
+    default: {
+      const _exhaustive: never = item.type;
+      return _exhaustive;
+    }
+  }
+}
+
 export function initials(name: string): string {
   return name
     .split(/\s+/)

@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import type { DriveItem, SortKey, SortOrder } from "../types";
 import type { View } from "../App";
-import { formatBytes, formatDate } from "../format";
+import { createdBySubtitle, formatBytes, formatDate } from "../format";
 
 interface Props {
   view: View;
@@ -300,8 +300,13 @@ export function FileList(props: Props) {
                 )}
                 <div className="texts">
                   <div className="name">{item.name}</div>
-                  {view.kind !== "root" && item.created_by && (
-                    <div className="subtitle">Uploaded by {item.created_by}</div>
+                  {view.kind !== "root" && createdBySubtitle(item) && (
+                    <div
+                      className="subtitle"
+                      title={item.created_by_email || undefined}
+                    >
+                      {createdBySubtitle(item)}
+                    </div>
                   )}
                 </div>
               </div>

@@ -1,12 +1,26 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, auth, proxy
+from . import __version__, attribution, auth, proxy
 
-app = FastAPI(title="Storage", version=__version__, docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    attribution.init_db()
+    yield
+
+
+app = FastAPI(
+    title="Storage",
+    version=__version__,
+    docs_url=None,
+    redoc_url=None,
+    lifespan=lifespan,
+)
 
 app.include_router(auth.router)
 app.include_router(proxy.router)

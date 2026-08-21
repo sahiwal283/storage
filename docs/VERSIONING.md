@@ -24,9 +24,10 @@ change** as the work. Do not leave version bumps for a later commit.
 
 | Version | Date | Type | Summary |
 |---------|------|------|---------|
+| 1.3.0 | 2026-08-21 | minor | App-user attribution: list shows Authentik name for files/folders created in the app |
 | 1.2.0 | 2026-08-19 | minor | Chunked uploads with pause/resume; stream fallback for large one-shot; serial queue |
 | 1.1.1 | 2026-08-19 | patch | Upload tray completes after success (track by id, not object identity); last-modified no longer shows 2001 for yearless WorkDrive dates |
 | 1.1.0 | 2026-08-19 | minor | Create team folder at Team Folders root; Zoho calls use Bearer; session 401 no longer login-loops; semantic versioning (`VERSION`, `/healthz`) |
 | 1.0.0 | 2026-08-19 | major | Initial WorkDrive UI: Authentik OIDC, company picker, browse/search/upload/download/rename/move/trash |
 
-**Current:** 1.2.0
+**Current:** 1.3.0

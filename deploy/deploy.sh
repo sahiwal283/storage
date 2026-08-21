@@ -32,7 +32,7 @@ rm "/tmp/$TARBALL"
 echo "==> Installing in CT $CTID"
 ssh "$PVE" "pct push $CTID /tmp/$TARBALL /tmp/$TARBALL && rm /tmp/$TARBALL && pct exec $CTID -- bash -c '
   set -euo pipefail
-  mkdir -p $APP_DIR
+  mkdir -p $APP_DIR $APP_DIR/data
   if [ -d $APP_DIR/backend ]; then
     tar czf /opt/storage-app-backup_${TS}.tar.gz -C $APP_DIR backend deploy VERSION 2>/dev/null || true
   fi

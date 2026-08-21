@@ -1,11 +1,16 @@
 """Brand-aware streaming passthrough to the Zoho Integration Service."""
 
+import logging
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from . import attribution
 from .auth import get_session
 from .config import get_settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", dependencies=[Depends(get_session)])
 
@@ -36,6 +41,23 @@ def _service_url(path: str) -> str:
     return f"{get_settings().service_url}{path}"
 
 
+def _apply_attribution(
+    body, status_code: int, *, session: dict | None, stamp: bool, overlay: bool
+) -> None:
+    if status_code != 200 or not isinstance(body, dict):
+        return
+    if stamp and session is not None:
+        try:
+            attribution.record_from_payload(body, session)
+        except Exception:
+            logger.exception("attribution stamp failed")
+    if stamp or overlay:
+        try:
+            attribution.overlay_payload(body)
+        except Exception:
+            logger.exception("attribution overlay failed")
+
+
 @router.get("/me")
 async def me(session: dict = Depends(get_session)):
     return {"email": session.get("email"), "name": session.get("name")}
@@ -47,7 +69,15 @@ async def brands():
 
 
 async def _forward_json(
-    method: str, brand: str, path: str, *, params: dict | None = None, json_body=None
+    method: str,
+    brand: str,
+    path: str,
+    *,
+    params: dict | None = None,
+    json_body=None,
+    session: dict | None = None,
+    stamp: bool = False,
+    overlay: bool = False,
 ):
     client = get_client()
     try:
@@ -65,6 +95,7 @@ async def _forward_json(
     # A Zoho 401 is a gateway credential problem, not a missing Storage session.
     # Passing 401 through would bounce the SPA into Authentik login.
     status_code = 502 if resp.status_code == 401 else resp.status_code
+    _apply_attribution(body, status_code, session=session, stamp=stamp, overlay=overlay)
     return JSONResponse(status_code=status_code, content=body)
 
 
@@ -74,9 +105,14 @@ async def teamfolders(brand: str):
 
 
 @router.post("/{brand}/teamfolders")
-async def create_teamfolder(brand: str, body: dict):
+async def create_teamfolder(brand: str, body: dict, session: dict = Depends(get_session)):
     return await _forward_json(
-        "POST", brand, "/zoho/workdrive/teamfolders", json_body=body
+        "POST",
+        brand,
+        "/zoho/workdrive/teamfolders",
+        json_body=body,
+        session=session,
+        stamp=True,
     )
 
 
@@ -87,19 +123,31 @@ async def children(brand: str, folder_id: str, request: Request):
         brand,
         f"/zoho/workdrive/folders/{folder_id}/children",
         params=dict(request.query_params),
+        overlay=True,
     )
 
 
 @router.get("/{brand}/search")
 async def search(brand: str, request: Request):
     return await _forward_json(
-        "GET", brand, "/zoho/workdrive/search", params=dict(request.query_params)
+        "GET",
+        brand,
+        "/zoho/workdrive/search",
+        params=dict(request.query_params),
+        overlay=True,
     )
 
 
 @router.post("/{brand}/folders")
-async def create_folder(brand: str, body: dict):
-    return await _forward_json("POST", brand, "/zoho/workdrive/folders", json_body=body)
+async def create_folder(brand: str, body: dict, session: dict = Depends(get_session)):
+    return await _forward_json(
+        "POST",
+        brand,
+        "/zoho/workdrive/folders",
+        json_body=body,
+        session=session,
+        stamp=True,
+    )
 
 
 @router.patch("/{brand}/files/{file_id}")
@@ -151,9 +199,15 @@ async def upload_chunk(brand: str, upload_id: str, request: Request):
 
 
 @router.post("/{brand}/uploads/{upload_id}/complete")
-async def complete_upload(brand: str, upload_id: str):
+async def complete_upload(
+    brand: str, upload_id: str, session: dict = Depends(get_session)
+):
     return await _forward_json(
-        "POST", brand, f"/zoho/workdrive/uploads/{upload_id}/complete"
+        "POST",
+        brand,
+        f"/zoho/workdrive/uploads/{upload_id}/complete",
+        session=session,
+        stamp=True,
     )
 
 
@@ -186,7 +240,9 @@ async def download(brand: str, file_id: str):
 
 
 @router.post("/{brand}/folders/{folder_id}/upload")
-async def upload(brand: str, folder_id: str, request: Request):
+async def upload(
+    brand: str, folder_id: str, request: Request, session: dict = Depends(get_session)
+):
     """Forward the multipart body verbatim as a stream — no buffering."""
     client = get_client()
     headers = _service_headers(brand)
@@ -205,4 +261,5 @@ async def upload(brand: str, folder_id: str, request: Request):
     content_type = resp.headers.get("content-type", "")
     body = resp.json() if content_type.startswith("application/json") else {"detail": resp.text}
     status_code = 502 if resp.status_code == 401 else resp.status_code
+    _apply_attribution(body, status_code, session=session, stamp=True, overlay=False)
     return JSONResponse(status_code=status_code, content=body)
